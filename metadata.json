@@ -1,0 +1,6 @@
+{
+  "name": "Dance Studio Room Scheduler",
+  "description": "Hourly time block scheduling and management system for two dance studios with timetable grids, booking management, conflict detection, and day/week views.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
