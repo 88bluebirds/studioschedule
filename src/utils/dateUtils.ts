@@ -224,6 +224,42 @@ export function checkBookingConflict(
   return { hasConflict: false };
 }
 
+/**
+ * Check every occurrence of a weekly series (week 1 = candidate.date).
+ * Returns the first clash, with the date of the occurrence that clashed.
+ */
+export function checkSeriesConflict(
+  existingBookings: Booking[],
+  candidate: {
+    id?: string;
+    roomId: RoomId;
+    date: string;
+    startHour: number;
+    durationHours: number;
+  },
+  weeks: number
+): { hasConflict: boolean; conflictingBooking?: Booking; conflictDate?: string } {
+  const total = Math.max(1, weeks);
+  for (let i = 0; i < total; i++) {
+    const date = i === 0 ? candidate.date : addDays(candidate.date, i * 7);
+    const result = checkBookingConflict(existingBookings, { ...candidate, date });
+    if (result.hasConflict) {
+      return { ...result, conflictDate: date };
+    }
+  }
+  return { hasConflict: false };
+}
+
+/** Longest booking (in whole hours, capped at maxHours) that still ends by closing time. */
+export function getMaxDurationHours(startHour: number, endHour: number, maxHours = 5): number {
+  return Math.max(0, Math.min(maxHours, endHour - startHour));
+}
+
+/** Short random suffix for generated booking ids. */
+export function randomIdSuffix(): string {
+  return Math.random().toString(36).slice(2, 6);
+}
+
 export function generateHoursArray(startHour: number, endHour: number): number[] {
   const hours: number[] = [];
   for (let h = startHour; h <= endHour; h++) {

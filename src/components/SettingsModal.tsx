@@ -24,7 +24,10 @@ interface SettingsModalProps {
   onClearAllData: () => void;
 }
 
-const REQUIRED_ADMIN_PASSWORD = 'Admin1234';
+// Set VITE_ADMIN_PASSWORD in your environment (e.g. .env.local). It is not stored in the repo.
+// Note: this is a deterrent only; anything in a Vite env var still ships in the browser bundle.
+const REQUIRED_ADMIN_PASSWORD: string = import.meta.env.VITE_ADMIN_PASSWORD ?? '';
+const IS_ADMIN_PASSWORD_CONFIGURED = REQUIRED_ADMIN_PASSWORD.length > 0;
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
@@ -47,7 +50,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   if (!isOpen) return null;
 
-  const isPasswordValid = password === REQUIRED_ADMIN_PASSWORD;
+  const isPasswordValid = IS_ADMIN_PASSWORD_CONFIGURED && password === REQUIRED_ADMIN_PASSWORD;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -259,7 +262,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <input
                 id="settings-password-input"
                 type="password"
-                placeholder="Enter administrator password..."
+                placeholder={
+                  IS_ADMIN_PASSWORD_CONFIGURED
+                    ? 'Enter administrator password...'
+                    : 'Admin password not configured (set VITE_ADMIN_PASSWORD)'
+                }
+                disabled={!IS_ADMIN_PASSWORD_CONFIGURED}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className={`w-full px-3.5 py-2 text-sm rounded-xl border bg-white focus:ring-2 transition-all font-mono ${

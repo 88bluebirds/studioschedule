@@ -16,7 +16,12 @@ import {
   STORAGE_KEY_BOOKINGS,
   STORAGE_KEY_SETTINGS,
 } from './types';
-import { addDays, getTodayDateString } from './utils/dateUtils';
+import {
+  addDays,
+  checkBookingConflict,
+  getTodayDateString,
+  randomIdSuffix,
+} from './utils/dateUtils';
 
 export function App() {
   // Settings & Bookings state with LocalStorage persistence
@@ -32,18 +37,26 @@ export function App() {
             !parsed.studioName || parsed.studioName.includes('RhythmCore')
               ? 'Athabasca Dance'
               : parsed.studioName,
-          startHour: parsed.startHour < 8 ? 8 : parsed.startHour,
-          endHour: parsed.endHour || 22,
+          // Keep the saved hours; only fall back to defaults when missing or invalid.
+          startHour:
+            typeof parsed.startHour === 'number' && parsed.startHour >= 0 && parsed.startHour <= 23
+              ? parsed.startHour
+              : DEFAULT_SETTINGS.startHour,
+          endHour:
+            typeof parsed.endHour === 'number' && parsed.endHour > 0 && parsed.endHour <= 24
+              ? parsed.endHour
+              : DEFAULT_SETTINGS.endHour,
+          // Keep saved room names (set in Settings); defaults only fill gaps.
           rooms: {
             'room-1': {
               ...DEFAULT_SETTINGS.rooms['room-1'],
               ...(parsed.rooms?.['room-1'] || {}),
-              name: 'UPPER STUDIO',
+              name: parsed.rooms?.['room-1']?.name?.trim() || DEFAULT_SETTINGS.rooms['room-1'].name,
             },
             'room-2': {
               ...DEFAULT_SETTINGS.rooms['room-2'],
               ...(parsed.rooms?.['room-2'] || {}),
-              name: 'LOWER STUDIO',
+              name: parsed.rooms?.['room-2']?.name?.trim() || DEFAULT_SETTINGS.rooms['room-2'].name,
             },
           },
         };
@@ -108,7 +121,7 @@ export function App() {
         const nextDate = addDays(bookingData.date, i * 7);
         newSeries.push({
           ...bookingData,
-          id: `booking-${Date.now()}-${i}-${Math.random().toString(36).substr(2, 4)}`,
+          id: `booking-${Date.now()}-${i}-${randomIdSuffix()}`,
           date: nextDate,
           notes: bookingData.notes
             ? `${bookingData.notes} (Recurrence ${i + 1}/${recurringWeeks})`
@@ -140,16 +153,17 @@ export function App() {
     }
   };
 
-  // Handler for duplicating a booking
+  // Handler for duplicating a booking.
+  // Opens the booking form prefilled with a copy (no id), so the user picks a free slot and
+  // the normal conflict check runs — saving a copy in the same slot would always clash.
   const handleDuplicateBooking = (booking: Booking) => {
-    const duplicated: Booking = {
-      ...booking,
-      id: `booking-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+    const { id: _id, createdAt: _createdAt, ...rest } = booking;
+    setBookingModalInitialData({
+      ...rest,
       title: `${booking.title} (Copy)`,
       status: 'confirmed',
-      createdAt: new Date().toISOString(),
-    };
-    setBookings((prev) => [...prev, duplicated]);
+    });
+    setIsBookingModalOpen(true);
   };
 
   // Handler for toggling checked-in status
@@ -166,6 +180,14 @@ export function App() {
   // Handler for switching room
   const handleSwitchRoom = (booking: Booking) => {
     const newRoomId: RoomId = booking.roomId === 'room-1' ? 'room-2' : 'room-1';
+    const conflict = checkBookingConflict(bookings, { ...booking, roomId: newRoomId });
+    if (conflict.hasConflict && conflict.conflictingBooking) {
+      const roomName = settings.rooms[newRoomId]?.name || newRoomId;
+      window.alert(
+        `Can't move this session: ${roomName} already has "${conflict.conflictingBooking.title}" at that time.`
+      );
+      return;
+    }
     setBookings((prev) =>
       prev.map((b) => (b.id === booking.id ? { ...b, roomId: newRoomId } : b))
     );
