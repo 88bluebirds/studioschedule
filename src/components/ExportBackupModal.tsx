@@ -10,6 +10,33 @@ interface ExportBackupModalProps {
   onImportBookings: (imported: Booking[]) => void;
 }
 
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Minimal shape check for an imported booking: the fields the views rely on. */
+function isValidBooking(value: unknown): value is Booking {
+  if (!value || typeof value !== 'object') return false;
+  const b = value as Record<string, unknown>;
+  return (
+    typeof b.id === 'string' &&
+    b.id.length > 0 &&
+    typeof b.title === 'string' &&
+    (b.roomId === 'room-1' || b.roomId === 'room-2') &&
+    typeof b.date === 'string' &&
+    DATE_RE.test(b.date) &&
+    typeof b.startHour === 'number' &&
+    Number.isInteger(b.startHour) &&
+    b.startHour >= 0 &&
+    b.startHour <= 23 &&
+    typeof b.durationHours === 'number' &&
+    b.durationHours > 0 &&
+    b.startHour + b.durationHours <= 24 &&
+    typeof b.instructor === 'string' &&
+    typeof b.genre === 'string' &&
+    typeof b.type === 'string' &&
+    typeof b.status === 'string'
+  );
+}
+
 export const ExportBackupModal: React.FC<ExportBackupModalProps> = ({
   isOpen,
   onClose,
@@ -92,15 +119,29 @@ export const ExportBackupModal: React.FC<ExportBackupModalProps> = ({
       try {
         const content = event.target?.result as string;
         const parsed = JSON.parse(content);
-        if (Array.isArray(parsed.bookings)) {
-          onImportBookings(parsed.bookings);
-          setImportStatus(`Successfully restored ${parsed.bookings.length} bookings!`);
-        } else if (Array.isArray(parsed)) {
-          onImportBookings(parsed);
-          setImportStatus(`Successfully imported ${parsed.length} bookings!`);
-        } else {
+        const rawList: unknown[] | null = Array.isArray(parsed?.bookings)
+          ? parsed.bookings
+          : Array.isArray(parsed)
+          ? parsed
+          : null;
+        if (!rawList) {
           setImportStatus('Invalid schedule format in JSON file.');
+          return;
         }
+
+        // Only keep entries that look like real bookings, so a bad file can't break the views.
+        const valid = rawList.filter(isValidBooking);
+        const skipped = rawList.length - valid.length;
+        if (valid.length === 0) {
+          setImportStatus('No valid bookings found in this file. Nothing was changed.');
+          return;
+        }
+
+        onImportBookings(valid);
+        setImportStatus(
+          `Successfully imported ${valid.length} bookings!` +
+            (skipped > 0 ? ` (${skipped} invalid ${skipped === 1 ? 'entry was' : 'entries were'} skipped.)` : '')
+        );
       } catch (err) {
         setImportStatus('Error reading file. Please provide valid JSON.');
       }

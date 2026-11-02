@@ -10,11 +10,15 @@ import {
 } from 'lucide-react';
 import { Booking, DanceGenre, RoomId, BookingType, StudioSettings } from '../types';
 import {
-  checkBookingConflict,
+  checkSeriesConflict,
+  formatDateDisplay,
   formatHour,
   formatTimeRange,
   generateHoursArray,
   getGenreTheme,
+  getMaxDurationHours,
+  getTodayDateString,
+  randomIdSuffix,
 } from '../utils/dateUtils';
 
 interface BookingModalProps {
@@ -49,7 +53,10 @@ const TYPES: { value: BookingType; label: string }[] = [
   { value: 'makeup', label: 'Make Up Class' },
 ];
 
-const REQUIRED_PASSWORD = 'Dance!';
+// Set VITE_BOOKING_PASSWORD in your environment (e.g. .env.local). It is not stored in the repo.
+// Note: this is a deterrent only; anything in a Vite env var still ships in the browser bundle.
+const REQUIRED_PASSWORD: string = import.meta.env.VITE_BOOKING_PASSWORD ?? '';
+const IS_PASSWORD_CONFIGURED = REQUIRED_PASSWORD.length > 0;
 
 export const BookingModal: React.FC<BookingModalProps> = ({
   isOpen,
@@ -77,7 +84,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     if (initialData) {
       setTitle(initialData.title || '');
       setRoomId(initialData.roomId || 'room-1');
-      setDate(initialData.date || new Date().toISOString().split('T')[0]);
+      setDate(initialData.date || getTodayDateString());
       setStartHour(initialData.startHour !== undefined ? initialData.startHour : settings.startHour);
       setDurationHours(initialData.durationHours || 1);
       setInstructor(initialData.instructor || '');
@@ -91,17 +98,28 @@ export const BookingModal: React.FC<BookingModalProps> = ({
 
   if (!isOpen) return null;
 
-  // Check conflicts
-  const conflict = checkBookingConflict(existingBookings, {
-    id: initialData?.id,
-    roomId,
-    date,
-    startHour,
-    durationHours,
-  });
+  // Check conflicts — for a new weekly series, every week is checked, not just the first.
+  const seriesWeeks = isRecurring && !initialData?.id ? recurringWeeks : 1;
+  const conflict = checkSeriesConflict(
+    existingBookings,
+    {
+      id: initialData?.id,
+      roomId,
+      date,
+      startHour,
+      durationHours,
+    },
+    seriesWeeks
+  );
+  const conflictIsLaterWeek = !!conflict.conflictDate && conflict.conflictDate !== date;
 
-  const isPasswordValid = password === REQUIRED_PASSWORD;
-  const isSubmitDisabled = conflict.hasConflict || !isPasswordValid;
+  // Bookings must finish by closing time.
+  const maxDuration = getMaxDurationHours(startHour, settings.endHour);
+  const durationOptions = Array.from({ length: maxDuration }, (_, i) => i + 1);
+  const exceedsClosing = startHour + durationHours > settings.endHour;
+
+  const isPasswordValid = IS_PASSWORD_CONFIGURED && password === REQUIRED_PASSWORD;
+  const isSubmitDisabled = conflict.hasConflict || exceedsClosing || !date || !isPasswordValid;
 
   const selectedRoom = settings.rooms[roomId];
   const hours = generateHoursArray(settings.startHour, settings.endHour - 1);
@@ -113,7 +131,7 @@ export const BookingModal: React.FC<BookingModalProps> = ({
     }
 
     const newBooking: Booking = {
-      id: initialData?.id || `booking-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+      id: initialData?.id || `booking-${Date.now()}-${randomIdSuffix()}`,
       title: title.trim() || `${genre} Session`,
       roomId,
       date,
@@ -167,6 +185,9 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <p className="mt-0.5">
                 {selectedRoom?.name || roomId} already has{' '}
                 <strong>"{conflict.conflictingBooking.title}"</strong> ({conflict.conflictingBooking.instructor})
+                {conflictIsLaterWeek && conflict.conflictDate && (
+                  <> on <strong>{formatDateDisplay(conflict.conflictDate)}</strong> (a later week of this series)</>
+                )}{' '}
                 scheduled from{' '}
                 {formatTimeRange(
                   conflict.conflictingBooking.startHour,
@@ -175,6 +196,17 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 )}. Please choose a different hour or studio room.
               </p>
             </div>
+          </div>
+        )}
+
+        {/* Closing Time Warning Banner */}
+        {exceedsClosing && (
+          <div className="bg-amber-50 border-b border-amber-200 p-3.5 flex items-start gap-3 text-xs text-amber-900">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <p>
+              This session would run past closing time ({formatHour(settings.endHour, settings.timeFormat)}).
+              Please choose a shorter duration or an earlier start.
+            </p>
           </div>
         )}
 
@@ -284,7 +316,13 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <select
                 id="session-starthour-select"
                 value={startHour}
-                onChange={(e) => setStartHour(Number(e.target.value))}
+                onChange={(e) => {
+                  const newStart = Number(e.target.value);
+                  setStartHour(newStart);
+                  // Keep the duration within closing time for the new start.
+                  const newMax = getMaxDurationHours(newStart, settings.endHour);
+                  setDurationHours((d) => Math.max(1, Math.min(d, newMax)));
+                }}
                 className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500/20 font-mono"
               >
                 {hours.map((h) => (
@@ -305,11 +343,16 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 onChange={(e) => setDurationHours(Number(e.target.value))}
                 className="w-full px-3 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500/20 font-mono"
               >
-                <option value={1}>1 Hour ({formatTimeRange(startHour, 1, settings.timeFormat)})</option>
-                <option value={2}>2 Hours ({formatTimeRange(startHour, 2, settings.timeFormat)})</option>
-                <option value={3}>3 Hours ({formatTimeRange(startHour, 3, settings.timeFormat)})</option>
-                <option value={4}>4 Hours ({formatTimeRange(startHour, 4, settings.timeFormat)})</option>
-                <option value={5}>5 Hours ({formatTimeRange(startHour, 5, settings.timeFormat)})</option>
+                {durationOptions.map((d) => (
+                  <option key={d} value={d}>
+                    {d} {d === 1 ? 'Hour' : 'Hours'} ({formatTimeRange(startHour, d, settings.timeFormat)})
+                  </option>
+                ))}
+                {exceedsClosing && (
+                  <option value={durationHours} disabled>
+                    {durationHours} Hours (past closing)
+                  </option>
+                )}
               </select>
             </div>
           </div>
@@ -407,7 +450,12 @@ export const BookingModal: React.FC<BookingModalProps> = ({
               <input
                 id="booking-password-input"
                 type="password"
-                placeholder="Enter authorization password..."
+                placeholder={
+                  IS_PASSWORD_CONFIGURED
+                    ? 'Enter authorization password...'
+                    : 'Booking password not configured (set VITE_BOOKING_PASSWORD)'
+                }
+                disabled={!IS_PASSWORD_CONFIGURED}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 className={`w-full px-3.5 py-2 text-sm rounded-xl border bg-white focus:ring-2 transition-all font-mono ${
@@ -480,7 +528,17 @@ export const BookingModal: React.FC<BookingModalProps> = ({
                 id="confirm-booking-submit-btn"
                 type="submit"
                 disabled={isSubmitDisabled}
-                title={isSubmitDisabled ? (!isPasswordValid ? 'Enter authorization password to enable' : 'Time slot has conflicts') : 'Confirm and save booking'}
+                title={
+                  !isSubmitDisabled
+                    ? 'Confirm and save booking'
+                    : !isPasswordValid
+                    ? 'Enter authorization password to enable'
+                    : exceedsClosing
+                    ? 'Session runs past closing time'
+                    : !date
+                    ? 'Choose a date'
+                    : 'Time slot has conflicts'
+                }
                 className={`px-5 py-2.5 text-xs sm:text-sm font-semibold rounded-xl shadow-xs transition-all flex items-center gap-2 ${
                   isSubmitDisabled
                     ? 'bg-slate-200 text-slate-400 border border-slate-300 cursor-not-allowed opacity-80 shadow-none'
